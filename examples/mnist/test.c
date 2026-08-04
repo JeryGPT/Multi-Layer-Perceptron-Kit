@@ -5,12 +5,13 @@ void    network_test_mnist(Network* network);
 void    use_network(Network* network, float* x, float* y, int dataset_size);
 
 int main () {
+    srand(time(NULL));
     //  Create the model
     Network* network = nn_network_create(28*28); 
 
     //  Define the network
-    nn_add_layer_dense(network, 32, activation_sigmoid); 
-    nn_add_layer_dense(network, 16, activation_sigmoid);
+    nn_add_layer_dense(network, 32, activation_reLU); 
+    nn_add_layer_dense(network, 16, activation_reLU);
     nn_add_layer_dense(network, 10, activation_softmax);
 
     //  Import weights and biases from saved model snapshhot
