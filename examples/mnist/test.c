@@ -5,6 +5,7 @@ void    network_test_mnist(Network* network);
 void    use_network(Network* network, float* x, float* y, int dataset_size);
 
 int main () {
+    srand(time(NULL));
     //  Create the model
     Network* network = nn_network_create(28*28); 
 

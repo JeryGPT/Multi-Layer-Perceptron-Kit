@@ -5,6 +5,7 @@ void network_train_mnist(Network* network);
 
 #define SAMPLES 60000
 int main() {
+    srand(time(NULL));
 
     //  Create the model
     Network* network = nn_network_create(28*28);
