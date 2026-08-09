@@ -15,7 +15,7 @@ void nn_network_destroy(Network* network);
 void nn_add_layer_dense(Network* network, int input_size, ActivationFunction activation);
 
 void nn_network_print(Network network);
-void nn_network_forward(Network* net, float* x, int input_size);
+void nn_network_forward(Network* net, float* x);
 void nn_network_backward(Network* net, float* y, float lr);
 void nn_network_fit(Network* net, float* x, int data_size, float* y, float lr, int epochs, int print_steps);
 
@@ -151,7 +151,7 @@ float nn_calculate_loss(Network* net, float* x, float* y, int data_size) {
     Layer* output_layer = &net->layers[net->layers_count-1];
     for (int i = 0; i < data_size; i ++) {
         float sample_loss = 0;
-        nn_network_forward(net, &x[i * input_size], input_size);
+        nn_network_forward(net, &x[i * input_size]);
         for (int n = 0; n < output_size; n++) {
             sample_loss += _loss_value(net->loss_function, output_layer->neurons[n].output, y[i * output_size + n]);
         } 
@@ -167,10 +167,10 @@ void nn_network_fit(Network* net, float* x, int data_size, float* y, float lr, i
     for (int epoch = 0; epoch < epochs; epoch ++) {
 
         for (int i = 0; i < data_size; i++) {
-            if (i % (data_size / 10) == 0 || i == data_size - 1) {
+            if (i % ((data_size + 10 )/ 10) == 0 || i == data_size - 1) {
                 int progress = (i * 10) / data_size;
                 if (i == data_size - 1) progress = 10;
-
+                
                 printf("\r[");
                 for (int p = 0; p < progress; p++) {
                     printf("=");
@@ -182,8 +182,9 @@ void nn_network_fit(Network* net, float* x, int data_size, float* y, float lr, i
                 
                 fflush(stdout); 
             }
-            nn_network_forward(net, &x[i*input_size], input_size);
+            nn_network_forward(net, &x[i*input_size]);
             nn_network_backward(net, &y[i*output_size], lr);
+
 
         }
         
@@ -193,7 +194,7 @@ void nn_network_fit(Network* net, float* x, int data_size, float* y, float lr, i
                 net, 
                 x,
                 y, 
-                (int)data_size/10
+                (int)(data_size/10 > 0 ? data_size/10 : data_size)
             )
             );  
         }
@@ -364,7 +365,7 @@ void nn_network_test(Network* net, float* x, float* y, int samples) { // works o
 
     for (int i = 0; i < samples; i++) {
 
-        nn_network_forward(net, &x[i*net->input_size], net->input_size);
+        nn_network_forward(net, &x[i*net->input_size]);
 
         int correct_o = _max_arr(&y[i*output_layer->neuron_count],output_layer->neuron_count);
         int predicted_o = _biggest_output(output_layer);
@@ -379,7 +380,8 @@ void nn_network_test(Network* net, float* x, float* y, int samples) { // works o
 
 }
 
-void nn_network_forward(Network* net, float* x, int x_size) {
+void nn_network_forward(Network* net, float* x) {
+    int x_size = net->input_size;
     if (x_size != net->layers[0].neuron_count) {
         printf("Couldn't load the data of size %d into %d input model", x_size, net->layers[0].neuron_count);
         exit(1);

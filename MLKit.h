@@ -66,7 +66,7 @@ void        nn_network_set_loss(Network* network, LossFunction loss_f);
 
 // Propagation 
 
-void        nn_network_forward(Network* net, float* x, int input_size);
+void        nn_network_forward(Network* net, float* x);
 void        nn_network_backward(Network* net, float* y, float lr);
 
 // Training and Testing
