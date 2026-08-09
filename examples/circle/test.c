@@ -6,6 +6,7 @@ int main () {
     Network* model = nn_network_create(2);
     nn_add_layer_dense(model, 32, activation_reLU);
     nn_add_layer_dense(model, 16, activation_reLU);
+
     nn_add_layer_dense(model, 1, activation_sigmoid);
 
     char model_path[] = "./model_snapshots/model.mlk";
@@ -29,7 +30,7 @@ int main () {
 
                 float prediction = last_l->neurons[0].output;
 
-                printf("%c ", prediction > 0.5 ? '#' : ' ');
+                printf("%c ", prediction > 0.3 && prediction < 0.5 ? '\'' : prediction > 0.5 ? '#' : ' ');
             }
             printf("\n");
         }

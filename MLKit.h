@@ -18,7 +18,12 @@ typedef enum {
     activation_softmax,
     activation_sigmoid,
     NONE
-} ActivationFunctions;
+} ActivationFunction;
+
+typedef enum {
+    HalfMSE,
+    CrossEntropy
+} LossFunction;
 
 // STRUCTS
 
@@ -29,13 +34,14 @@ typedef struct {
     float output;
     float z_val;
     float delta;
+    float error;
 } Neuron;
 
 
 typedef struct {
     Neuron* neurons;
     int neuron_count;
-    ActivationFunctions activation;
+    ActivationFunction activation;
     LayerType type;
 
 } Layer;
@@ -45,6 +51,7 @@ typedef struct {
     int layers_count;
     int layers_capacity;
     int input_size;
+    LossFunction loss_function;
 } Network;
 
 
@@ -54,7 +61,8 @@ typedef struct {
 
 Network*    nn_network_create(int input_size);
 void        nn_network_destroy(Network* network);
-void        nn_add_layer_dense(Network* network, int input_size, ActivationFunctions activation);
+void        nn_add_layer_dense(Network* network, int input_size, ActivationFunction activation);
+void        nn_network_set_loss(Network* network, LossFunction loss_f);
 
 // Propagation 
 

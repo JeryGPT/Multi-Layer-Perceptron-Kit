@@ -8,17 +8,13 @@
 
 
 
-
-
-
 Network* nn_network_create(int input_size);
 
 void nn_network_destroy(Network* network);
 
-void nn_add_layer_dense(Network* network, int input_size, ActivationFunctions activation);
+void nn_add_layer_dense(Network* network, int input_size, ActivationFunction activation);
 
-
-void nn_print_network(Network network);
+void nn_network_print(Network network);
 void nn_network_forward(Network* net, float* x, int input_size);
 void nn_network_backward(Network* net, float* y, float lr);
 void nn_network_fit(Network* net, float* x, int data_size, float* y, float lr, int epochs, int print_steps);
@@ -26,8 +22,8 @@ void nn_network_fit(Network* net, float* x, int data_size, float* y, float lr, i
 static void _layer_activate(Layer* layer);
 static int _max_arr(float* arr, int arr_len);
 
-static void _layer_init(Layer* layer, int neuron_count, int input_size, ActivationFunctions activation, LayerType type);
-static void _neuron_init(Neuron* neuron, int input_size);
+static void _layer_init(Layer* layer, int neuron_count, int input_size, ActivationFunction activation, LayerType type);
+static void _neuron_init(Neuron* neuron, int input_size, ActivationFunction activation);
 
 // ACTIVATORS
 float _reLU(float x) {
@@ -38,7 +34,10 @@ float _sigmoid(float x) {
     return 1/ (1 + expf(-x));
 }
 
-float _get_derivative(ActivationFunctions activation, float z_val) {
+float _get_derivative(Layer* output_layer, int neuron_idx) {
+    ActivationFunction activation = output_layer->activation;
+    float z_val = output_layer->neurons[neuron_idx].z_val;
+    float a = output_layer->neurons[neuron_idx].output;
     switch (activation)
     {
     case activation_linear:
@@ -51,12 +50,98 @@ float _get_derivative(ActivationFunctions activation, float z_val) {
     case activation_sigmoid:
         float s = _sigmoid(z_val);
         return s * (1.0 -s);
-    
+    case activation_softmax:
+        
     default:
         return 1.0;
-
     }
 }
+
+float _loss_value(LossFunction loss_f, float output, float y)  { // per/neuron calculation
+    switch (loss_f) {
+        case HalfMSE:
+            float error = output - y;
+            return 0.5 * error * error;
+        case CrossEntropy: {
+            float epsilon = 1e-7f;
+            if (output < epsilon) output = epsilon;
+            return - y * logf(output);
+            break;
+        }
+    }
+}
+
+float _loss_deriv_value(LossFunction loss_f, float output, float y) { // per/neuron derivative
+    switch (loss_f) {
+        case HalfMSE: {
+            return output - y;
+        }
+        case CrossEntropy: {
+            float epsilon = 1e-7f;
+            if (output < epsilon) output = epsilon;
+            if (output > 1.0f - epsilon) output = 1.0f - epsilon;
+            return -y/output + (1-y)/(1-output);
+        }
+    }
+
+}
+
+static void _softmax_output_delta(Layer* output_l, LossFunction loss_f){
+    int n_count = output_l->neuron_count;
+
+    float dot = 0.0f;
+
+    for (int j = 0; j < n_count; j++) {
+        dot += output_l->neurons[j].error * output_l->neurons[j].output;
+    }
+
+    for (int i = 0; i < n_count; i++) {
+        float o_i = output_l->neurons[i].output;
+        output_l->neurons[i].delta = o_i * (output_l->neurons[i].error - dot);
+    }
+}
+
+void _calculate_output_delta(Network* net, float* y){
+    LossFunction loss_f = net->loss_function;
+    Layer* output_l = &net->layers[net->layers_count-1];
+    ActivationFunction activation = output_l->activation;
+    switch (loss_f) {
+        case (HalfMSE): {
+            if (activation == activation_softmax) {
+                for (int n = 0; n < output_l->neuron_count; n++) {
+                    Neuron* neuron = &output_l->neurons[n];
+                    float error = _loss_deriv_value(loss_f, neuron->output, y[n]);
+                    neuron->error = error;
+                }
+                _softmax_output_delta(output_l, loss_f);
+            }else{
+              
+                for (int n = 0; n < output_l->neuron_count; n++) {
+                    Neuron* neuron = &output_l->neurons[n];
+                    float error = _loss_deriv_value(loss_f, neuron->output, y[n]);
+                    float z_deriv = _get_derivative(output_l, n);
+                    neuron->delta = error * z_deriv;
+                }
+            }
+            break;
+        }
+        case (CrossEntropy) : {
+            if (activation == activation_softmax || activation == activation_sigmoid){
+                for (int n = 0; n < output_l->neuron_count; n++) {
+                    Neuron* neuron = &output_l->neurons[n];
+                    neuron->delta = output_l->neurons[n].output - y[n];
+                }
+            }else {
+                for (int n = 0; n < output_l->neuron_count; n++) {
+                    Neuron* neuron = &output_l->neurons[n];
+                    float error = _loss_deriv_value(loss_f, neuron->output, y[n]);
+                    neuron->delta = error * _get_derivative(output_l, n);
+                }
+            }
+        }
+    }
+}
+
 
 float nn_calculate_loss(Network* net, float* x, float* y, int data_size) {
     float total_loss = 0.0f;
@@ -68,8 +153,7 @@ float nn_calculate_loss(Network* net, float* x, float* y, int data_size) {
         float sample_loss = 0;
         nn_network_forward(net, &x[i * input_size], input_size);
         for (int n = 0; n < output_size; n++) {
-            float error = output_layer->neurons[n].output - y[i*output_size + n];
-            sample_loss += error * error;
+            sample_loss += _loss_value(net->loss_function, output_layer->neurons[n].output, y[i * output_size + n]);
         } 
         total_loss += sample_loss/output_size;
     }   
@@ -109,47 +193,37 @@ void nn_network_fit(Network* net, float* x, int data_size, float* y, float lr, i
                 net, 
                 x,
                 y, 
-                data_size
+                (int)data_size/10
             )
             );  
         }
 
     }
-    nn_network_forward(net, &x[102*input_size], input_size);
-
-    Neuron* output_neurons = net->layers[net->layers_count-1].neurons;
 
     printf("Finished training %d, %d epochs \n", epochs, epochs);
 }
 
 void nn_network_backward(Network* net, float* y, float lr) {
     int layers_count = net->layers_count;
-    for (int n = 0; n < net->layers[layers_count-1].neuron_count; n++) {
-        Neuron* neuron = &net->layers[layers_count-1].neurons[n];
-        float error = neuron->output - y[n];
 
-        float deriv = _get_derivative(net->layers[layers_count-1].activation, neuron->z_val);         //sensitivity
+    _calculate_output_delta(net, y);
 
-        neuron->delta = error * deriv;
+    for (int cr = layers_count -2; cr > 0; cr--){
+        Layer* current_l = &net->layers[cr];
+        Layer* next_l = &net->layers[cr+1];
+        for (int n = 0; n < current_l->neuron_count; n++) {
+            float error_sum = 0.0f;
+            Neuron* current_neuron = &current_l->neurons[n];
 
-    }
-
-        for (int cr = layers_count -2; cr > 0; cr--){
-            Layer* current_l = &net->layers[cr];
-            Layer* next_l = &net->layers[cr+1];
-            for (int n = 0; n < current_l->neuron_count; n++) {
-                float error_sum = 0.0f;
-                Neuron* current_neuron = &current_l->neurons[n];
-
-                for (int next_n = 0; next_n < next_l->neuron_count; next_n++) {
-                    Neuron* next_neuron = &next_l->neurons[next_n];
-                    float next_neuron_delta = next_neuron->delta;
-                    error_sum += next_neuron_delta * next_neuron->weights[n];
-                }
-                float deriv = _get_derivative(current_l->activation, current_neuron->z_val);
-                current_neuron->delta = error_sum * deriv;
-                
+            for (int next_n = 0; next_n < next_l->neuron_count; next_n++) {
+                Neuron* next_neuron = &next_l->neurons[next_n];
+                float next_neuron_delta = next_neuron->delta;
+                error_sum += next_neuron_delta * next_neuron->weights[n];
             }
+            float deriv = _get_derivative(current_l, n);
+            current_neuron->delta = error_sum * deriv;
+                
+        }
         
     } 
 
@@ -160,14 +234,14 @@ void nn_network_backward(Network* net, float* y, float lr) {
             Neuron* neuron = &layer->neurons[n];
             for (int w = 0; w < neuron->input_size; w++) {
                 neuron->weights[w] -= lr * neuron->delta * prev_layer->neurons[w].output;
-                neuron->bias -= lr * neuron->delta;
             }
+            neuron->bias -= lr * neuron->delta;
         }
     }
 
-
     return;
 }
+
 void nn_network_export(Network* net, char* filepath){
     FILE* fptr = fopen(filepath, "wb");
 
@@ -179,6 +253,7 @@ void nn_network_export(Network* net, char* filepath){
     
     if (!fptr) {
         printf("Failed to export the model.");
+        
     }
     int total_weights = 0;
     for (int l = 1; l < net->layers_count; l++){
@@ -195,20 +270,23 @@ void nn_network_export(Network* net, char* filepath){
             }
         }
     }
-    printf("Saved a total of %d parameters to %s path", total_weights, filepath);
+    printf("Saved a total of %d parameters to %s path\n", total_weights, filepath);
     fclose(fptr);
 }
 
 void nn_network_import(Network* net, float* buffer, int size) {
     int current_w = 0;
-    for (int l = 0; l < net->layers_count; l++){
+    for (int l = 1; l < net->layers_count; l++){
         Layer* layer = &net->layers[l];
         for (int n = 0; n < layer->neuron_count; n++){
             Neuron* neuron = &layer->neurons[n];
+            neuron->bias=buffer[current_w];
+            current_w++;
             for (int w = 0; w < neuron->input_size; w++){
                 neuron->weights[w]=buffer[current_w];
                 current_w++;
             }
+
         }
     }
     if (current_w != (int)(size  - sizeof(float))) {
@@ -231,6 +309,11 @@ void nn_network_import_file(Network* net, char* filepath) {
     rewind(fptr);
 
     float* buffer = malloc(f_size);
+    if (!buffer) {
+        printf("Failed to allocate memory for the import buffer.");
+        fclose(fptr);
+        exit(1);
+    }
 
     fread(buffer, sizeof(float), f_size/sizeof(float), fptr);
 
@@ -261,7 +344,7 @@ void nn_network_import_file(Network* net, char* filepath) {
 
 int _biggest_output(Layer* output_layer) {
     int idx = 0;
-    float biggest = 0;
+    float biggest = output_layer->neurons[0].output;
     for (int n = 0; n < output_layer->neuron_count; n++) {
         Neuron* neuron = &output_layer->neurons[n];
         if (neuron->output > biggest) {
@@ -369,7 +452,7 @@ void _layer_activate(Layer* layer) {
             break;
         
         case activation_softmax:
-            float max = 0;
+            float max = layer->neurons[0].z_val;
             for (int n = 0; n < layer->neuron_count; n++) {
                 layer->neurons[n].output = layer->neurons[n].z_val;
                 if (layer->neurons[n].z_val > max) {
@@ -378,7 +461,7 @@ void _layer_activate(Layer* layer) {
             }
             float sum_exp = 0;
             for (int n = 0; n < layer->neuron_count; n++) {
-                layer->neurons[n].output = expf(layer->neurons[n].output - max);
+                layer->neurons[n].output = expf(layer->neurons[n].z_val - max);
                 sum_exp                 += layer->neurons[n].output;
             }
 
@@ -406,17 +489,8 @@ void _layer_activate(Layer* layer) {
 }
 
 
-
-float _sum_arr(float* arr, int arr_len) {
-    float sum = 0;
-    for (int i = 0; i < arr_len; i++) {
-        sum += arr[i];
-    }
-    return sum;
-}
-
 int _max_arr(float* arr, int arr_len) {
-    float max = 0;
+    float max = arr[0];
     int idx = 0;
     for (int i =0; i < arr_len; i++) {
         if (arr[i] > max) {
@@ -435,7 +509,7 @@ void _layer_counter(Network* net) {
     }
 }
 
-void nn_add_layer_dense(Network* net, int neurons_count, ActivationFunctions activation) {
+void nn_add_layer_dense(Network* net, int neurons_count, ActivationFunction activation) {
 
     int last_input_size = net->layers[net->layers_count-1].neuron_count;
     _layer_counter(net);
@@ -445,59 +519,72 @@ void nn_add_layer_dense(Network* net, int neurons_count, ActivationFunctions act
     net->layers_count += 1;
 }
 
+void nn_network_set_loss(Network* network, LossFunction loss_f) {
+    network->loss_function = loss_f;
+}
+
+
 Network* nn_network_create(int input_size) {
     Network* net            = (Network*)malloc(sizeof(Network));
     net->input_size         = input_size;
     net->layers             = calloc(2, sizeof(Layer));
     net->layers_count       = 0;
     net->layers_capacity    = 2;
+    net->loss_function      = HalfMSE;
 
-    Layer activation_layer;
-    activation_layer.activation    = NONE;
-    activation_layer.neuron_count  = input_size;
-    activation_layer.type          = INPUT;
-    activation_layer.neurons       = malloc(input_size * sizeof(Neuron));
+    Layer input_layer;
+    input_layer.activation    = NONE;
+    input_layer.neuron_count  = input_size;
+    input_layer.type          = INPUT;
+    input_layer.neurons       = malloc(input_size * sizeof(Neuron));
     for (int n = 0; n < input_size; n++) {
-        _neuron_init(&activation_layer.neurons[n], 1);
+        _neuron_init(&input_layer.neurons[n], 1, NONE);
     }
-    net->layers[0]      = activation_layer;
+    net->layers[0]      = input_layer;
     net->layers_count   += 1;
     
 
     return net;
 }
 
-void _layer_init(Layer* layer, int neuron_count, int input_size, ActivationFunctions activation, LayerType type) {
+void _layer_init(Layer* layer, int neuron_count, int input_size, ActivationFunction activation, LayerType type) {
     layer->activation   = activation;
     layer->neuron_count = neuron_count;
     layer->neurons      = calloc(layer->neuron_count, sizeof(Neuron));
     layer->type         = type;
 
     for (int n = 0; n < neuron_count; n++) {
-        _neuron_init(&layer->neurons[n], input_size);
+        _neuron_init(&layer->neurons[n], input_size, layer->activation);
     }
     return;
 }
 
-void _neuron_init(Neuron* neuron, int input_size) {
+void _neuron_init(Neuron* neuron, int input_size, ActivationFunction activation) {
     neuron->weights     = calloc(input_size, sizeof(float));
     neuron->bias        = 0;
     neuron->input_size  = input_size;
     neuron->delta       = 0;
     neuron->z_val       = 0;
     neuron->output      = 0;
+    neuron->error       = 0;
+
+    float scale = 1.0f;
+    switch (activation){
+        case activation_reLU:
+            scale = sqrtf(2.0f / input_size); 
+            break;
+            
+    }
 
     for (int w = 0; w < input_size; w++) {
-        neuron->weights[w] = ((float)rand() / (float)RAND_MAX) * 2.0f - 1.0f;
+        neuron->weights[w] = (((float)rand() / (float)RAND_MAX) * 2.0f - 1.0f) * scale; // random weights between -1 and 1 scaled by the activation function
     }
     
     return;
 }
 
-
-
-
-void nn_network_destroy(Network* net) {
+void    nn_network_destroy(Network* net) {
+    
     for (int l = 0; l < net->layers_count; l ++) {
 
         for (int n = 0; n < net->layers[l].neuron_count; n++) {

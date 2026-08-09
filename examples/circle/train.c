@@ -1,15 +1,17 @@
 #include "../../MLKit.h"
 
 #define TRAINING_SAMPLES 3000
-#define RADIUS 0.8f
+#define RADIUS 1.0f
 
 int main () {
-    srand(time(NULL));
+    srand(1);
 
     Network* model = nn_network_create(2);
     nn_add_layer_dense(model, 32, activation_reLU);
     nn_add_layer_dense(model, 16, activation_reLU);
     nn_add_layer_dense(model, 1, activation_sigmoid);
+    nn_network_set_loss(model, HalfMSE);
+    
 
     float* x_data = calloc(TRAINING_SAMPLES * 2, sizeof(float));
     float* y_data = calloc(TRAINING_SAMPLES, sizeof(float));

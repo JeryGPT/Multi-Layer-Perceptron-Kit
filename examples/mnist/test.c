@@ -10,9 +10,10 @@ int main () {
     Network* network = nn_network_create(28*28); 
 
     //  Define the network
+    nn_add_layer_dense(network, 64, activation_reLU); 
     nn_add_layer_dense(network, 32, activation_reLU); 
-    nn_add_layer_dense(network, 16, activation_reLU);
     nn_add_layer_dense(network, 10, activation_softmax);
+    nn_network_set_loss(network, CrossEntropy);
 
     //  Import weights and biases from saved model snapshhot
     char model_snapshot_path[] = "./model_snapshots/mnist_model.mlk";
