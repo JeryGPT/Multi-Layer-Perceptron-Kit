@@ -16,8 +16,8 @@ void nn_add_layer_dense(Network* network, int input_size, ActivationFunction act
 
 void nn_network_print(Network network);
 void nn_network_forward(Network* net, float* x);
-void nn_network_backward(Network* net, float* y, float lr);
-void nn_network_fit(Network* net, float* x, int data_size, float* y, float lr, int epochs, int print_steps);
+void nn_network_backward(Network* net, float* y);
+void nn_network_fit(Network* net, float* x, int data_size, float* y, float lr, int epochs,int batch, int print_steps);
 
 static void _layer_activate(Layer* layer);
 static int _max_arr(float* arr, int arr_len);
@@ -161,12 +161,44 @@ float nn_calculate_loss(Network* net, float* x, float* y, int data_size) {
     return total_loss;
 }
 
-void nn_network_fit(Network* net, float* x, int data_size, float* y, float lr, int epochs, int print_steps) {
+
+void _clear_gradients(Network* net) {
+    for (int i = 1; i < net->layers_count; i++) {
+        Layer* output_l = &net->layers[i];
+        for (int n = 0; n < output_l->neuron_count; n++) {
+            Neuron* neuron = &output_l->neurons[n];
+            neuron->bias_gradient = 0;
+            for (int w = 0; w < neuron->input_size; w++) {
+                neuron->weights_gradient[w] = 0;
+            }
+        }
+    }
+}
+
+
+void _apply_gradients(Network* net, float lr, float batch) {
+    int layers_count = net->layers_count;
+
+    for (int l = 1; l < layers_count; l++) {
+        Layer* layer = &net->layers[l];
+        for (int n = 0; n < layer->neuron_count; n++) {
+            Neuron* neuron = &layer->neurons[n];
+            for (int w = 0; w < neuron->input_size; w++) {
+                neuron->weights[w] -= lr * neuron->weights_gradient[w] / batch;
+            }
+            neuron->bias -= lr * neuron->bias_gradient / batch;
+        }
+    }
+    _clear_gradients(net);
+}
+
+void nn_network_fit(Network* net, float* x, int data_size, float* y, float lr, int epochs, int batch, int print_steps) {
     int input_size = net->input_size;
     int output_size = net->layers[net->layers_count-1].neuron_count;
     for (int epoch = 0; epoch < epochs; epoch ++) {
 
         for (int i = 0; i < data_size; i++) {
+            
             if (i % ((data_size + 10 )/ 10) == 0 || i == data_size - 1) {
                 int progress = (i * 10) / data_size;
                 if (i == data_size - 1) progress = 10;
@@ -183,10 +215,21 @@ void nn_network_fit(Network* net, float* x, int data_size, float* y, float lr, i
                 fflush(stdout); 
             }
             nn_network_forward(net, &x[i*input_size]);
-            nn_network_backward(net, &y[i*output_size], lr);
+            nn_network_backward(net, &y[i*output_size]);
+            if ((i + 1) % batch == 0 || i == data_size - 1) {
+                int current_batch = data_size % batch;
+
+                if (current_batch == 0) {
+                    current_batch = batch;
+                }
+
+                _apply_gradients(net, lr, current_batch);
+            }
+
 
 
         }
+
         
         if (epoch % print_steps == 0) {
             printf(" Loss: %f \n", 
@@ -204,7 +247,9 @@ void nn_network_fit(Network* net, float* x, int data_size, float* y, float lr, i
     printf("Finished training %d, %d epochs \n", epochs, epochs);
 }
 
-void nn_network_backward(Network* net, float* y, float lr) {
+
+
+void nn_network_backward(Network* net, float* y) {
     int layers_count = net->layers_count;
 
     _calculate_output_delta(net, y);
@@ -234,11 +279,13 @@ void nn_network_backward(Network* net, float* y, float lr) {
         for (int n = 0; n < layer->neuron_count; n++) {
             Neuron* neuron = &layer->neurons[n];
             for (int w = 0; w < neuron->input_size; w++) {
-                neuron->weights[w] -= lr * neuron->delta * prev_layer->neurons[w].output;
+                neuron->weights_gradient[w] += neuron->delta * prev_layer->neurons[w].output;
             }
-            neuron->bias -= lr * neuron->delta;
+            neuron->bias_gradient += neuron->delta;
         }
     }
+
+
 
     return;
 }
@@ -563,12 +610,14 @@ void _layer_init(Layer* layer, int neuron_count, int input_size, ActivationFunct
 
 void _neuron_init(Neuron* neuron, int input_size, ActivationFunction activation) {
     neuron->weights     = calloc(input_size, sizeof(float));
+    neuron->weights_gradient = calloc(input_size, sizeof(float));
+    neuron->bias_gradient = 0;
     neuron->bias        = 0;
     neuron->input_size  = input_size;
-    neuron->delta       = 0;
     neuron->z_val       = 0;
     neuron->output      = 0;
     neuron->error       = 0;
+    neuron->delta       = 0;
 
     float scale = 1.0f;
     switch (activation){
@@ -591,6 +640,7 @@ void    nn_network_destroy(Network* net) {
 
         for (int n = 0; n < net->layers[l].neuron_count; n++) {
             free(net->layers[l].neurons[n].weights);
+            free(net->layers[l].neurons[n].weights_gradient);
         }
 
         free(net->layers[l].neurons);

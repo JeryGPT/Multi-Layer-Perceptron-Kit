@@ -35,6 +35,8 @@ typedef struct {
     float z_val;
     float delta;
     float error;
+    float* weights_gradient;
+    float bias_gradient;
 } Neuron;
 
 
@@ -67,11 +69,11 @@ void        nn_network_set_loss(Network* network, LossFunction loss_f);
 // Propagation 
 
 void        nn_network_forward(Network* net, float* x);
-void        nn_network_backward(Network* net, float* y, float lr);
+void        nn_network_backward(Network* net, float* y);
 
 // Training and Testing
 
-void        nn_network_fit(Network* net, float* x, int data_size, float* y, float lr, int epochs, int print_steps);
+void        nn_network_fit(Network* net, float* x, int data_size, float* y, float lr, int epochs,int batch,  int print_steps);
 void        nn_network_print(Network network);
 void        nn_network_test(Network* net, float* x, float* y, int samples); // works on softmax output only for now
 

@@ -37,7 +37,7 @@ int main () {
         y_train[i] = c > 0.5 ? a * b / 2 : a * b; // triangle
         
     }
-    nn_network_fit(model, x_train, TRAIN_SAMPLE, y_train, 0.1, 70, 1);
+    nn_network_fit(model, x_train, TRAIN_SAMPLE, y_train, 0.1, 70, 32, 1);
     nn_network_export(model, "./model_snapshots/model.mlk");
 
     Layer* last_l = &model->layers[model->layers_count-1];;

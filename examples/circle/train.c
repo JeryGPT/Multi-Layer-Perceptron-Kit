@@ -28,7 +28,7 @@ int main () {
         y_data[i]        = is_in_circle;
     }
 
-    nn_network_fit(model, x_data, TRAINING_SAMPLES, y_data, 0.001, 300, 25);
+    nn_network_fit(model, x_data, TRAINING_SAMPLES, y_data, 0.001, 300, 32, 25);
     char export_path[] = "./model_snapshots/model.mlk";
     nn_network_export(model, export_path);
 
