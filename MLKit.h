@@ -50,6 +50,7 @@ typedef struct {
 
 typedef struct {
     Layer* layers;
+    Layer* output_layer;
     int layers_count;
     int layers_capacity;
     int input_size;

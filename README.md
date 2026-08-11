@@ -269,7 +269,7 @@ int main(void) {
     printf("\nPredictions after training:\n");
     for (int i = 0; i < 4; i++) {
         nn_network_forward(net, &x_train[i * 2]);
-        Layer* out = &net->layers[net->layers_count - 1];
+        Layer* out = net->output_layer;
         printf("  %.0f XOR %.0f -> %.4f (expected %.0f)\n",
                x_train[i*2], x_train[i*2+1], out->neurons[0].output, y_train[i]);
     }
@@ -405,6 +405,7 @@ typedef struct {
 ```c
 typedef struct {
     Layer* layers;
+    Layer* output_layer;
     int layers_count;
     int layers_capacity;
     int input_size;

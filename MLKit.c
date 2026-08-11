@@ -103,7 +103,7 @@ static void _softmax_output_delta(Layer* output_l, LossFunction loss_f){
 
 void _calculate_output_delta(Network* net, float* y){
     LossFunction loss_f = net->loss_function;
-    Layer* output_l = &net->layers[net->layers_count-1];
+    Layer* output_l = net->output_layer;
     ActivationFunction activation = output_l->activation;
     switch (loss_f) {
         case (HalfMSE): {
@@ -146,9 +146,9 @@ void _calculate_output_delta(Network* net, float* y){
 float nn_calculate_loss(Network* net, float* x, float* y, int data_size) {
     float total_loss = 0.0f;
     int input_size = net->input_size;
-    int output_size = net->layers[net->layers_count-1].neuron_count;
+    int output_size = net->output_layer->neuron_count;
 
-    Layer* output_layer = &net->layers[net->layers_count-1];
+    Layer* output_layer = net->output_layer;
     for (int i = 0; i < data_size; i ++) {
         float sample_loss = 0;
         nn_network_forward(net, &x[i * input_size]);
@@ -194,7 +194,7 @@ void _apply_gradients(Network* net, float lr, float batch) {
 
 void nn_network_fit(Network* net, float* x, int data_size, float* y, float lr, int epochs, int batch, int print_steps) {
     int input_size = net->input_size;
-    int output_size = net->layers[net->layers_count-1].neuron_count;
+    int output_size = net->output_layer->neuron_count;
     for (int epoch = 0; epoch < epochs; epoch ++) {
 
         for (int i = 0; i < data_size; i++) {
@@ -404,9 +404,9 @@ int _biggest_output(Layer* output_layer) {
 }
 
 void nn_network_test(Network* net, float* x, float* y, int samples) { // works on softmax output only for now
-    Layer* output_layer = &net->layers[net->layers_count-1];
+    Layer* output_layer = net->output_layer;
 
-    Neuron* output_neurons = net->layers[net->layers_count-1].neurons;
+    Neuron* output_neurons = output_layer->neurons;
 
     int correct_predictions = 0;
 
@@ -560,17 +560,20 @@ void _layer_counter(Network* net) {
 
 void nn_add_layer_dense(Network* net, int neurons_count, ActivationFunction activation) {
 
-    int last_input_size = net->layers[net->layers_count-1].neuron_count;
+    int last_input_size = net->output_layer->neuron_count;
     _layer_counter(net);
     
 
     _layer_init(&net->layers[net->layers_count], neurons_count, last_input_size, activation, DENSE);
     net->layers_count += 1;
+
+    net->output_layer = &net->layers[net->layers_count-1];
 }
 
 void nn_network_set_loss(Network* network, LossFunction loss_f) {
     network->loss_function = loss_f;
 }
+
 
 
 Network* nn_network_create(int input_size) {
@@ -591,6 +594,7 @@ Network* nn_network_create(int input_size) {
     }
     net->layers[0]      = input_layer;
     net->layers_count   += 1;
+    net->output_layer   = &net->layers[0];
     
 
     return net;
