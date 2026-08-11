@@ -44,7 +44,7 @@ nn_add_layer_dense(net, hidden_size, activation_reLU);
 nn_add_layer_dense(net, output_size, activation_softmax);
 nn_network_set_loss(net, CrossEntropy);
 
-nn_network_fit(net, x_train, num_samples, y_train, learning_rate, epochs, print_every_n_epochs);
+nn_network_fit(net, x_train, num_samples, y_train, learning_rate, epochs, batch_size, print_every_n_epochs);
 nn_network_test(net, x_test, y_test, num_test_samples);
 
 nn_network_export(net, "model.bin");
@@ -116,37 +116,50 @@ for (int i = 0; i < out->neuron_count; i++) {
 }
 ```
 
-#### `void nn_network_backward(Network* net, float* y, float lr)`
+#### `void nn_network_backward(Network* net, float* y)`
 Runs backpropagation for **one sample** against target vector `y` (length
-must equal the output layer's neuron count), then applies an SGD weight
-update with learning rate `lr`. You must call `nn_network_forward` for the
-same sample immediately before this.
+must equal the output layer's neuron count). Rather than updating weights
+immediately, it accumulates each neuron's gradient into its
+`weights_gradient` / `bias_gradient` buffers. You must call
+`nn_network_forward` for the same sample immediately before this.
 
 ```c
 float y[10] = { 0,0,1,0,0,0,0,0,0,0 }; // one-hot label
 nn_network_forward(net, x);
-nn_network_backward(net, y, 0.01f);
+nn_network_backward(net, y);
 ```
 
-> This is a per-sample (pure SGD) update — there is no mini-batching.
+> No weight update happens here — accumulated gradients are only applied
+> (and cleared) once a full batch has been accumulated. See
+> `nn_network_fit` below, which drives this for you; call
+> `nn_network_backward` directly only if you're writing a custom training
+> loop.
 
 ---
 
 ### Training & testing
 
-#### `void nn_network_fit(Network* net, float* x, int data_size, float* y, float lr, int epochs, int print_steps)`
-Trains the network for `epochs` epochs over a flattened dataset:
+#### `void nn_network_fit(Network* net, float* x, int data_size, float* y, float lr, int epochs, int batch, int print_steps)`
+Trains the network for `epochs` epochs over a flattened dataset, using
+mini-batch gradient descent:
 
 - `x` — `data_size * input_size` floats, samples laid out contiguously.
 - `y` — `data_size * output_size` floats, targets laid out contiguously.
-- `lr` — learning rate applied every sample.
+- `lr` — learning rate.
+- `batch` — number of samples per mini-batch. Gradients are accumulated via
+  `nn_network_backward` over `batch` consecutive samples, then averaged and
+  applied in one update. If `data_size` isn't evenly divisible by `batch`,
+  the final, smaller batch of the epoch is averaged over its own actual
+  size rather than the full `batch`.
 - `print_steps` — prints a loss readout every `print_steps` epochs.
 
 Prints a live progress bar per epoch and a final "Finished training" message.
 
 ```c
-nn_network_fit(net, x_train, 60000, y_train, 0.01f, 10, 1);
+nn_network_fit(net, x_train, 60000, y_train, 0.01f, 10, 32, 1);
 ```
+
+> Passing `batch = 1` recovers the previous per-sample SGD behavior.
 
 #### `float nn_calculate_loss(Network* net, float* x, float* y, int data_size)`
 Runs `data_size` samples through the network and returns the mean per-sample
@@ -251,7 +264,7 @@ int main(void) {
     nn_add_layer_dense(net, 1, activation_sigmoid);
     nn_network_set_loss(net, CrossEntropy);
 
-    nn_network_fit(net, x_train, 4, y_train, 0.1f, 2000, 500);
+    nn_network_fit(net, x_train, 4, y_train, 0.1f, 2000, 4, 500);
 
     printf("\nPredictions after training:\n");
     for (int i = 0; i < 4; i++) {
@@ -280,10 +293,10 @@ Actual output from a real run:
 Finished training 2000, 2000 epochs
 
 Predictions after training:
-  0 XOR 0 -> 0.0190 (expected 0)
-  0 XOR 1 -> 0.9710 (expected 1)
-  1 XOR 0 -> 0.9709 (expected 1)
-  1 XOR 1 -> 0.0715 (expected 0)
+  0 XOR 0 -> 0.0046 (expected 0)
+  0 XOR 1 -> 0.9965 (expected 1)
+  1 XOR 0 -> 0.9964 (expected 1)
+  1 XOR 1 -> 0.0049 (expected 0)
 Saved a total of 33 parameters to xor_model.bin path
 ```
 
@@ -360,15 +373,21 @@ Set automatically by `nn_network_create` (layer 0 → `INPUT`) and
 
 ```c
 typedef struct {
-    float* weights;    // one weight per input from the previous layer
+    float* weights;          // one weight per input from the previous layer
     float  bias;
-    int    input_size; // number of incoming connections (== prev layer's neuron_count)
-    float  output;     // activated output, a
-    float  z_val;      // pre-activation weighted sum, z
-    float  delta;      // dL/dz for this neuron, set during backward pass
-    float  error;      // scratch field used for the softmax delta calculation
+    int    input_size;       // number of incoming connections (== prev layer's neuron_count)
+    float  output;           // activated output, a
+    float  z_val;            // pre-activation weighted sum, z
+    float  delta;            // dL/dz for this neuron, set during backward pass
+    float  error;            // scratch field used for the softmax delta calculation
+    float* weights_gradient; // one accumulator per weight, summed across a batch by nn_network_backward
+    float  bias_gradient;    // bias accumulator, summed across a batch by nn_network_backward
 } Neuron;
 ```
+
+`weights_gradient` / `bias_gradient` are zeroed after every batch update
+(see `_apply_gradients` / `_clear_gradients` internally) — they hold the
+running sum of per-sample gradients for the batch currently in progress.
 
 ### `Layer`
 
@@ -402,8 +421,10 @@ to touch it directly.
 
 - `nn_network_test`'s accuracy metric assumes a softmax/one-hot output —
   don't use it to evaluate regression or multi-label models.
-- `nn_network_backward` is single-sample SGD only; there's no built-in
-  mini-batch averaging. For now :) .
+- Mini-batching averages gradients over the requested `batch` size, but the
+  batch boundaries are simply consecutive slices of `x`/`y` in the order
+  given — there's no shuffling between epochs, so batch composition is
+  fixed across the whole training run.
 - `nn_network_import` / `nn_network_import_file` do **not** validate that
   the loaded file matches the target network's architecture — mismatches
   fail silently or read out of bounds rather than raising a clear error.
