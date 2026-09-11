@@ -47,18 +47,13 @@ void use_network(Network* network, float* x, float* y, int dataset_size) {
         int sample = 0;
         scanf("%d", &sample);
 
-        nn_network_forward(network, &x[sample*network->input_size], network->input_size);
+        nn_network_forward(network, &x[sample*network->input_size]);
 
         int sample_data = _arr_max(&y[sample*output_layer->neuron_count], output_layer->neuron_count);
-        int prediction = 0;
-        float max_output = 0;
-        for (int n = 0; n < output_layer->neuron_count; n++){
-            Neuron current_n = output_neurons[n];
-            if (current_n.output > max_output) {
-                max_output = current_n.output;
-                prediction = n;
-            }
-        }
+        int prediction = _arr_max(&output_layer->outputs[0], output_layer->neuron_count);
+        
+        float max_output = output_layer->outputs[prediction];
+
         printf("Sample %d: correct label: %d, prediction: %d (%f%%)\n", sample, sample_data, prediction, (float)max_output*100.0f);
     }
 }

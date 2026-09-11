@@ -27,7 +27,7 @@ int main () {
 
                 nn_network_forward(model, (float[]){x_p, y_p});
 
-                float prediction = last_l->neurons[0].output;
+                float prediction = nn_network_forward(model, (float[]){x_p, y_p})[0];
 
                 printf("%c ", prediction > 0.3 && prediction < 0.5 ? '\'' : prediction > 0.5 ? '#' : ' ');
             }

@@ -1,11 +1,14 @@
 #include "../../MLKit.h"
 #include "mnist_manage.h"
+#include <time.h>
+#include <stdio.h>
+
 
 void network_train_mnist(Network* network);
 
 #define SAMPLES 60000
 int main() {
-
+    srand(time(NULL));
     //  Create the model
     Network* network = nn_network_create(28*28);
 
@@ -51,7 +54,7 @@ void network_train_mnist(Network* network) {
     }
 
     //  Start the training
-    nn_network_fit(network, x_train, SAMPLES, y_train, 0.08, 10, 32, 1);
+    nn_network_fit(network, x_train, SAMPLES, y_train, 0.08, 50, 32, 1);
 
     //  Save the final model 
     char filepath[] = "./model_snapshots/mnist_model.mlk";
