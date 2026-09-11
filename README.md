@@ -2,7 +2,8 @@
 
 A small, dependency-free neural network library written in C. Supports dense
 feed-forward networks with ReLU / sigmoid / softmax / linear activations,
-HalfMSE / CrossEntropy losses, SGD training, and binary weight import/export.
+HalfMSE / CrossEntropy losses, mini-batch SGD training, binary weight
+import/export, and a **REINFORCE policy-gradient** reinforcement learning API.
 
 ```c
 #include "MLKit.h"
@@ -18,25 +19,35 @@ HalfMSE / CrossEntropy losses, SGD training, and binary weight import/export.
   - [Propagation](#propagation)
   - [Training & testing](#training--testing)
   - [Import / export](#import--export)
-- [Usage Example](#usage-example)
+  - [Helpers](#helpers)
+  - [Reinforcement learning](#reinforcement-learning)
+- [Usage Examples](#usage-examples)
+  - [Supervised learning (XOR)](#supervised-learning-xor)
+  - [Reinforcement learning (REINFORCE)](#reinforcement-learning-reinforce)
 - [Types](#types)
   - [`ActivationFunction`](#activationfunction)
   - [`LossFunction`](#lossfunction)
   - [`LayerType`](#layertype)
-  - [`Neuron`](#neuron)
   - [`Layer`](#layer)
   - [`Network`](#network)
+  - [`ReplayBuffer`](#replaybuffer)
+  - [`RLAgent`](#rlagent)
 - [Known Limitations](#known-limitations)
 
 ---
 
 ## Core Concepts
 
-A `Network` is a list of `Layer`s. Layer 0 is always an `INPUT` layer (a
-pass-through layer with no weights). Every subsequent layer is `DENSE`,
+A `Network` is a list of `Layer`s. Layer 0 is always a `LAYER_INPUT` layer (a
+pass-through with no weights). Every subsequent layer is `LAYER_DENSE`,
 fully connected to the previous layer, with its own activation function.
 
-Typical usage pattern:
+Each layer stores its parameters as **flat `float*` arrays** (weights, biases,
+outputs, z-values, deltas, errors, gradients) rather than an array of
+per-neuron structs. The weight for neuron `n`, incoming connection `w` in a
+layer lives at index `n * layer->tensor + w` inside `layer->weights`.
+
+Typical supervised usage:
 
 ```c
 Network* net = nn_network_create(input_size);
@@ -44,10 +55,10 @@ nn_add_layer_dense(net, hidden_size, activation_reLU);
 nn_add_layer_dense(net, output_size, activation_softmax);
 nn_network_set_loss(net, CrossEntropy);
 
-nn_network_fit(net, x_train, num_samples, y_train, learning_rate, epochs, batch_size, print_every_n_epochs);
+nn_network_fit(net, x_train, num_samples, y_train, lr, epochs, batch_size, print_every);
 nn_network_test(net, x_test, y_test, num_test_samples);
 
-nn_network_export(net, "model.bin");
+nn_network_export(net, "model.mlk");
 nn_network_destroy(net);
 ```
 
@@ -58,70 +69,65 @@ nn_network_destroy(net);
 ### Network lifecycle
 
 #### `Network* nn_network_create(int input_size)`
-Allocates a new `Network` with a single `INPUT` layer of `input_size`
-neurons. Default loss is `HalfMSE`. Caller owns the returned pointer and
-must call `nn_network_destroy` on it.
+Allocates a new `Network` with a single `LAYER_INPUT` layer of `input_size`
+neurons. Default loss is `HalfMSE`. Caller owns the returned pointer and must
+call `nn_network_destroy` on it.
 
 ```c
-Network* net = nn_network_create(784); // e.g. 28x28 flattened image
+Network* net = nn_network_create(784); // 28x28 flattened image
 ```
 
-#### `void nn_add_layer_dense(Network* network, int neurons_count, ActivationFunction activation)`
-Appends a fully-connected layer with `neurons_count` neurons to the network.
-Each neuron's `input_size` is inferred automatically from the previous
-layer's neuron count. Weights are randomly initialized in `[-1, 1]`, scaled
-by He initialization when `activation_reLU` is used.
+#### `void nn_add_layer_dense(Network* network, int neuron_count, ActivationFunction activation)`
+Appends a fully-connected layer with `neuron_count` neurons. The input size is
+inferred automatically from the previous layer. Weights are randomly
+initialized and scaled by the activation:
+
+| Activation | Init scale |
+|---|---|
+| `activation_reLU` | He — `sqrt(2 / fan_in)` |
+| `activation_softmax` | Xavier — `sqrt(1 / fan_in)` |
+| everything else | `1.0` |
 
 ```c
 nn_add_layer_dense(net, 128, activation_reLU);
 nn_add_layer_dense(net, 10,  activation_softmax); // output layer
 ```
 
-> ⚠️ Add layers in order — output layer last. `nn_network_forward` and
-> `nn_network_backward` assume `layers[layers_count - 1]` is the output layer.
+> ⚠️ Add layers in order — output layer last.
 
 #### `void nn_network_set_loss(Network* network, LossFunction loss_f)`
-Sets the loss function used by `nn_network_backward` and
-`nn_calculate_loss`. Defaults to `HalfMSE` if never called.
+Sets the loss function used during training and evaluation. Defaults to
+`HalfMSE` if never called.
 
 ```c
 nn_network_set_loss(net, CrossEntropy);
 ```
 
 #### `void nn_network_destroy(Network* network)`
-Frees all neurons, layers, and the network struct itself. Call once you're
-done with the network — no other function should be called on it afterward.
+Frees all layer arrays and the network struct. No other function should be
+called on the network after this.
 
 ---
 
 ### Propagation
 
-#### `void nn_network_forward(Network* net, float* x)`
-Runs a single input sample through the network, populating `z_val` and
-`output` on every neuron. `x` must point to a buffer of exactly
-`net->input_size` floats — the size is read from the network itself rather
-than passed in, so it's the caller's responsibility to ensure `x` is sized
-correctly; there's no bounds check against a mismatched buffer.
+#### `float* nn_network_forward(Network* net, float* x)`
+Runs one input sample through the network. Returns a pointer directly into
+`net->output_layer->outputs` — a `float*` of length `output_layer->neuron_count`.
+The pointer is valid until the next forward call or `nn_network_destroy`.
+
+`x` must be exactly `net->input_size` floats — there is no bounds check.
 
 ```c
-float x[784] = { /* ... */ };
-nn_network_forward(net, x);
-```
-
-After calling, read predictions from the output layer:
-```c
-Layer* out = &net->layers[net->layers_count - 1];
-for (int i = 0; i < out->neuron_count; i++) {
-    printf("%f\n", out->neurons[i].output);
-}
+float* out = nn_network_forward(net, x);
+printf("class 3 score: %f\n", out[3]);
 ```
 
 #### `void nn_network_backward(Network* net, float* y)`
-Runs backpropagation for **one sample** against target vector `y` (length
-must equal the output layer's neuron count). Rather than updating weights
-immediately, it accumulates each neuron's gradient into its
-`weights_gradient` / `bias_gradient` buffers. You must call
-`nn_network_forward` for the same sample immediately before this.
+Backpropagates for **one sample** against target vector `y` (length ==
+output layer's `neuron_count`). Accumulates gradients into each layer's
+`weights_gradient` / `bias_gradient` buffers — no weight update yet.
+Call `nn_network_forward` for the same sample immediately before this.
 
 ```c
 float y[10] = { 0,0,1,0,0,0,0,0,0,0 }; // one-hot label
@@ -129,54 +135,54 @@ nn_network_forward(net, x);
 nn_network_backward(net, y);
 ```
 
-> No weight update happens here — accumulated gradients are only applied
-> (and cleared) once a full batch has been accumulated. See
-> `nn_network_fit` below, which drives this for you; call
-> `nn_network_backward` directly only if you're writing a custom training
-> loop.
+> Gradients are averaged and applied only when `nn_apply_gradients` is called
+> (which `nn_network_fit` does automatically every `batch` steps).
+
+#### `void nn_apply_gradients(Network* net, float lr)`
+Averages accumulated gradients over the current batch count, applies the SGD
+update to all weights and biases, then zeroes the gradient buffers. Called
+automatically by `nn_network_fit`; call directly only in a custom training loop.
+
+```c
+nn_network_forward(net, x);
+nn_network_backward(net, y);
+// ... repeat for batch_size samples ...
+nn_apply_gradients(net, 0.01f);
+```
 
 ---
 
 ### Training & testing
 
 #### `void nn_network_fit(Network* net, float* x, int data_size, float* y, float lr, int epochs, int batch, int print_steps)`
-Trains the network for `epochs` epochs over a flattened dataset, using
-mini-batch gradient descent:
+Trains for `epochs` epochs over a flattened dataset using mini-batch gradient descent.
 
-- `x` — `data_size * input_size` floats, samples laid out contiguously.
-- `y` — `data_size * output_size` floats, targets laid out contiguously.
-- `lr` — learning rate.
-- `batch` — number of samples per mini-batch. Gradients are accumulated via
-  `nn_network_backward` over `batch` consecutive samples, then averaged and
-  applied in one update. If `data_size` isn't evenly divisible by `batch`,
-  the final, smaller batch of the epoch is averaged over its own actual
-  size rather than the full `batch`.
-- `print_steps` — prints a loss readout every `print_steps` epochs.
+| Parameter | Description |
+|---|---|
+| `x` | `data_size x input_size` floats, samples contiguous |
+| `y` | `data_size x output_size` floats, targets contiguous |
+| `lr` | Learning rate |
+| `batch` | Samples per mini-batch. Pass `1` for per-sample SGD. |
+| `print_steps` | Print a loss readout every `print_steps` epochs |
 
 Prints a live progress bar per epoch and a final "Finished training" message.
 
 ```c
-nn_network_fit(net, x_train, 60000, y_train, 0.01f, 10, 32, 1);
+nn_network_fit(net, x_train, 60000, y_train, 0.01f, 50, 32, 1);
 ```
 
-> Passing `batch = 1` recovers the previous per-sample SGD behavior.
-
 #### `float nn_calculate_loss(Network* net, float* x, float* y, int data_size)`
-Runs `data_size` samples through the network and returns the mean per-sample
-loss (using the network's configured `LossFunction`), without updating any
-weights. Useful for validation/held-out evaluation, or for the periodic loss
-readout inside `nn_network_fit`.
+Returns mean per-sample loss over `data_size` samples without updating weights.
+Useful for validation sets or periodic diagnostics.
 
 ```c
 float val_loss = nn_calculate_loss(net, x_val, y_val, 1000);
 ```
 
 #### `void nn_network_test(Network* net, float* x, float* y, int samples)`
-Runs `samples` inputs through the network and reports classification
-accuracy by comparing `argmax(output)` to `argmax(y)` per sample.
+Reports classification accuracy by comparing `argmax(output)` to `argmax(y)` per sample.
 
-> **Currently assumes a softmax (one-hot classification) output layer.**
-> Not meaningful for regression (linear) or multi-label (sigmoid) outputs.
+> **Assumes a softmax / one-hot output.** Not meaningful for regression or multi-label outputs.
 
 ```c
 nn_network_test(net, x_test, y_test, 10000);
@@ -184,9 +190,8 @@ nn_network_test(net, x_test, y_test, 10000);
 ```
 
 #### `void nn_network_print(Network network)`
-Prints every layer and neuron's bias, input size, output, `z_val`, `delta`,
-and weight count. Intended for debugging small networks — output volume
-scales with total parameter count. Takes the `Network` by value.
+Prints every layer's neurons with bias, input size, output, z-value, delta,
+and weight count. Intended for debugging small networks.
 
 ```c
 nn_network_print(*net);
@@ -196,51 +201,122 @@ nn_network_print(*net);
 
 ### Import / export
 
-Binary format is a flat sequence of `float32` values, one network's worth of
-parameters, laid out layer-by-layer (skipping the input layer) and
-neuron-by-neuron as: **`bias, weight[0], weight[1], ..., weight[input_size-1]`**.
+Binary format: flat `float32` stream, layer-by-layer (input layer skipped),
+neuron-by-neuron: **`bias, weight[0], weight[1], ..., weight[tensor-1]`**.
 
 #### `void nn_network_export(Network* net, char* filepath)`
-Writes the network's parameters to `filepath` in the format above,
-overwriting any existing file. Prints the total parameter count on success.
+Writes all parameters to `filepath`, overwriting any existing file. Prints
+the total parameter count on success.
 
 ```c
-nn_network_export(net, "model.bin");
+nn_network_export(net, "model.mlk");
 ```
 
-#### `void nn_network_import_file(Network* net, char* filepath)`
-Loads parameters from a file previously written by `nn_network_export` into
-an **already-constructed** network with matching architecture (same number
-of layers and neurons per layer — this is not validated, so a mismatched
-architecture will read garbage or overrun the buffer). Exits the process if
-the file can't be opened or the buffer can't be allocated.
+#### `int nn_network_import_file(Network* net, char* filepath)`
+Loads parameters from a file into an **already-constructed** network with
+matching architecture. Returns `0` on success, `-1` if the file can't be opened.
+
+> Architecture mismatch is **not** validated — mismatched sizes will silently
+> read garbage or overrun the buffer.
 
 ```c
 Network* net = nn_network_create(784);
 nn_add_layer_dense(net, 128, activation_reLU);
 nn_add_layer_dense(net, 10,  activation_softmax);
-nn_network_import_file(net, "model.bin");
+if (nn_network_import_file(net, "model.mlk") != 0) {
+    fprintf(stderr, "Failed to load model\n");
+}
 ```
 
 #### `void nn_network_import(Network* net, float* buffer, int size)`
-Same as `nn_network_import_file`, but loads from an in-memory `float*`
-buffer you've already populated (e.g. if you fetched weights from somewhere
-other than disk) rather than reading a file. `size` should be given in
-**bytes**, matching the convention used internally for file sizes.
+Same as `nn_network_import_file` but from an in-memory buffer. `size` is in **bytes**.
 
 ```c
-float* buf = /* ... obtained elsewhere ... */;
 nn_network_import(net, buf, buf_size_in_bytes);
 ```
 
 ---
 
-## Usage Example
+### Helpers
 
-This is a complete, compilable program — it trains a tiny network to learn
-XOR, prints its predictions, and saves the model. Verified against the
-library: after 2000 epochs the loss drops from ~0.13 to ~0.001 and the
-output layer correctly separates the four cases.
+#### `int nn_biggest_output_idx(Layer* output_l)`
+Returns the index of the neuron with the highest output — equivalent to
+`argmax` over the output layer.
+
+```c
+float* out = nn_network_forward(net, x);
+int predicted_class = nn_biggest_output_idx(net->output_layer);
+```
+
+---
+
+### Reinforcement learning
+
+MLKit includes a REINFORCE policy-gradient trainer built on top of the core
+network API. The workflow is:
+
+1. Create a `Network` with a `softmax` output (action probabilities).
+2. Wrap it in an `RLAgent` (one or more parallel replay buffers).
+3. Each step: run forward, sample an action, remember the transition.
+4. At the end of a rollout: call `rl_policy_fit` to update weights.
+
+#### `RLAgent* rl_agent_create(Network* model, int agent_count)`
+Creates an `RLAgent` owning `agent_count` independent `ReplayBuffer`s. The
+agent borrows `model` — destroy the network separately.
+
+```c
+RLAgent* agent = rl_agent_create(net, 1);
+```
+
+#### `void rl_agent_destroy(RLAgent* agent)`
+Frees all replay buffers and the agent struct. Does **not** free the network.
+
+#### `int rl_draw_action(Layer* output_l)`
+Samples an action index from the output layer's probability distribution
+(expects softmax). Call after `nn_network_forward`.
+
+```c
+nn_network_forward(net, state);
+int action = rl_draw_action(net->output_layer);
+```
+
+#### `void rl_remember(ReplayBuffer* buff, float* state, float reward, int action_idx, int should_discount, int done)`
+Appends one transition to a replay buffer. Buffer grows dynamically (doubles
+capacity when full).
+
+| Parameter | Description |
+|---|---|
+| `state` | Input features for this step (copied) |
+| `reward` | Immediate reward received |
+| `action_idx` | The action that was taken |
+| `should_discount` | `1` to include in return computation, `0` to skip |
+| `done` | `1` if this step ends the episode |
+
+```c
+rl_remember(&agent->buffers[0], state, reward, action, 1, done);
+```
+
+#### `void rl_replaybuff_clear(ReplayBuffer* buff)`
+Resets the buffer size to 0 (retains allocated capacity). Called automatically
+by `rl_policy_fit` after consuming each buffer.
+
+#### `void rl_policy_fit(RLAgent* agent, int* buffer_ids, int buffers_count, float lr, float gamma)`
+Runs REINFORCE over the selected buffers:
+1. Discounts rewards backward within each episode using `gamma`.
+2. Computes policy gradient and accumulates gradients for each step.
+3. Calls `nn_apply_gradients` once to update weights.
+4. Clears all consumed buffers.
+
+```c
+int bufs[] = { 0 };
+rl_policy_fit(agent, bufs, 1, 0.001f, 0.99f);
+```
+
+---
+
+## Usage Examples
+
+### Supervised learning (XOR)
 
 ```c
 #include <stdio.h>
@@ -250,13 +326,7 @@ output layer correctly separates the four cases.
 int main(void) {
     srand((unsigned)time(NULL));
 
-    // XOR: 4 samples, 2 input features, 1 binary output.
-    float x_train[8] = {
-        0, 0,
-        0, 1,
-        1, 0,
-        1, 1
-    };
+    float x_train[8] = { 0,0,  0,1,  1,0,  1,1 };
     float y_train[4] = { 0, 1, 1, 0 };
 
     Network* net = nn_network_create(2);
@@ -268,13 +338,12 @@ int main(void) {
 
     printf("\nPredictions after training:\n");
     for (int i = 0; i < 4; i++) {
-        nn_network_forward(net, &x_train[i * 2]);
-        Layer* out = net->output_layer;
+        float* out = nn_network_forward(net, &x_train[i * 2]);
         printf("  %.0f XOR %.0f -> %.4f (expected %.0f)\n",
-               x_train[i*2], x_train[i*2+1], out->neurons[0].output, y_train[i]);
+               x_train[i*2], x_train[i*2+1], out[0], y_train[i]);
     }
 
-    nn_network_export(net, "xor_model.bin");
+    nn_network_export(net, "xor_model.mlk");
     nn_network_destroy(net);
     return 0;
 }
@@ -287,7 +356,7 @@ gcc -o example example.c MLKit.c -lm
 ./example
 ```
 
-Actual output from a real run:
+Expected output:
 
 ```
 Finished training 2000, 2000 epochs
@@ -297,21 +366,73 @@ Predictions after training:
   0 XOR 1 -> 0.9965 (expected 1)
   1 XOR 0 -> 0.9964 (expected 1)
   1 XOR 1 -> 0.0049 (expected 0)
-Saved a total of 33 parameters to xor_model.bin path
+Saved a total of 33 parameters to xor_model.mlk path
 ```
 
-Reusing a trained model later:
+Reusing a saved model:
 
 ```c
 Network* net = nn_network_create(2);
 nn_add_layer_dense(net, 8, activation_reLU);
 nn_add_layer_dense(net, 1, activation_sigmoid);
-nn_network_import_file(net, "xor_model.bin");
+nn_network_import_file(net, "xor_model.mlk");
 
-nn_network_forward(net, sample);
-Layer* out = &net->layers[net->layers_count - 1];
-// read out->neurons[i].output for predictions
+float* out = nn_network_forward(net, sample);
+// out[0] is the prediction
 ```
+
+---
+
+### Reinforcement learning (REINFORCE)
+
+Skeleton for a single-agent policy gradient loop:
+
+```c
+#include <string.h>
+#include <time.h>
+#include "MLKit.h"
+
+#define STATE_SIZE  8
+#define NUM_ACTIONS 4
+
+int main(void) {
+    srand((unsigned)time(NULL));
+
+    Network* net = nn_network_create(STATE_SIZE);
+    nn_add_layer_dense(net, 64, activation_reLU);
+    nn_add_layer_dense(net, NUM_ACTIONS, activation_softmax);
+    nn_network_set_loss(net, CrossEntropy);
+
+    RLAgent* agent = rl_agent_create(net, 1);
+
+    for (int episode = 0; episode < 1000; episode++) {
+        float state[STATE_SIZE] = { /* initial observation */ };
+        int done = 0;
+
+        while (!done) {
+            nn_network_forward(net, state);
+            int action = rl_draw_action(net->output_layer);
+
+            float reward;
+            float next_state[STATE_SIZE];
+            // env_step(action, next_state, &reward, &done);
+
+            rl_remember(&agent->buffers[0], state, reward, action, 1, done);
+            memcpy(state, next_state, sizeof(state));
+        }
+
+        int buf_ids[] = { 0 };
+        rl_policy_fit(agent, buf_ids, 1, 0.001f, 0.99f);
+    }
+
+    rl_agent_destroy(agent);
+    nn_network_destroy(net);
+    return 0;
+}
+```
+
+See [`examples/snake/`](examples/snake/) for a complete Snake game agent using
+this API.
 
 ---
 
@@ -329,13 +450,13 @@ typedef enum {
 } ActivationFunction;
 ```
 
-| Value                | Behavior |
-|-----------------------|----------|
-| `activation_reLU`     | `max(0, z)`. Weight init uses He scaling (`sqrt(2/fan_in)`). |
-| `activation_linear`   | Identity, `output = z`. Use for regression outputs or DQN-style Q-value heads. |
-| `activation_softmax`  | Numerically-stable softmax over the whole layer (max-subtraction trick). Intended for the **output layer only**. |
-| `activation_sigmoid`  | `1 / (1 + e^-z)`. |
-| `NONE`                | No activation applied. Used internally for the input layer. |
+| Value | Behavior |
+|---|---|
+| `activation_reLU` | `max(0, z)`. He weight init (`sqrt(2/fan_in)`). |
+| `activation_linear` | Identity. Use for regression or DQN Q-value heads. |
+| `activation_softmax` | Numerically-stable softmax. Output layer only. Xavier init (`sqrt(1/fan_in)`). |
+| `activation_sigmoid` | `1 / (1 + e^-z)`. |
+| `NONE` | No activation. Used internally for the input layer. |
 
 ### `LossFunction`
 
@@ -346,58 +467,50 @@ typedef enum {
 } LossFunction;
 ```
 
-| Value          | Formula (per output neuron) | Typical pairing |
-|-----------------|------------------------------|------------------|
-| `HalfMSE`       | `0.5 * (output - y)^2`       | `activation_linear` or `activation_sigmoid` output, regression |
-| `CrossEntropy`  | `-y * log(output)`           | `activation_softmax` (multi-class) or `activation_sigmoid` (binary) output |
+| Value | Formula (per output neuron) | Typical pairing |
+|---|---|---|
+| `HalfMSE` | `0.5 * (output - y)^2` | `activation_linear` / `activation_sigmoid`, regression |
+| `CrossEntropy` | `-y * log(output)` | `activation_softmax` (multi-class) or `activation_sigmoid` (binary) |
 
-When the loss/activation pairing is `CrossEntropy` + `softmax` or `CrossEntropy`
-+ `sigmoid`, the library uses the simplified combined gradient
-`delta = output - y` directly (the standard trick that cancels the softmax /
-cross-entropy Jacobian), rather than chaining the raw loss derivative through
-the activation derivative.
+When using `CrossEntropy` + `softmax` or `CrossEntropy` + `sigmoid`, the
+library uses the simplified combined gradient `delta = output - y` directly,
+cancelling the softmax / cross-entropy Jacobian.
 
 ### `LayerType`
 
 ```c
 typedef enum {
-    INPUT,
-    DENSE
+    LAYER_INPUT,
+    LAYER_DENSE
 } LayerType;
 ```
 
-Set automatically by `nn_network_create` (layer 0 → `INPUT`) and
-`nn_add_layer_dense` (`DENSE`). Not intended to be set manually.
-
-### `Neuron`
-
-```c
-typedef struct {
-    float* weights;          // one weight per input from the previous layer
-    float  bias;
-    int    input_size;       // number of incoming connections (== prev layer's neuron_count)
-    float  output;           // activated output, a
-    float  z_val;            // pre-activation weighted sum, z
-    float  delta;            // dL/dz for this neuron, set during backward pass
-    float  error;            // scratch field used for the softmax delta calculation
-    float* weights_gradient; // one accumulator per weight, summed across a batch by nn_network_backward
-    float  bias_gradient;    // bias accumulator, summed across a batch by nn_network_backward
-} Neuron;
-```
-
-`weights_gradient` / `bias_gradient` are zeroed after every batch update
-(see `_apply_gradients` / `_clear_gradients` internally) — they hold the
-running sum of per-sample gradients for the batch currently in progress.
+Set automatically by `nn_network_create` (`LAYER_INPUT`) and
+`nn_add_layer_dense` (`LAYER_DENSE`). Not intended to be set manually.
 
 ### `Layer`
 
 ```c
 typedef struct {
-    Neuron* neurons;
     int neuron_count;
+    float* weights;           // flat: weights[n * tensor + w]
+    float* biases;            // one per neuron
+    float* outputs;           // activated outputs (a)
+    float* z_values;          // pre-activation weighted sums (z)
+    float* deltas;            // dL/dz per neuron
+    float* errors;            // scratch for softmax delta
+    float* weights_gradient;  // accumulated per weight across a batch
+    float* bias_gradient;     // accumulated per neuron across a batch
+    int tensor;               // == previous layer neuron_count
     ActivationFunction activation;
     LayerType type;
 } Layer;
+```
+
+To read the weight connecting input `w` to neuron `n`:
+
+```c
+float w = layer->weights[n * layer->tensor + w_idx];
 ```
 
 ### `Network`
@@ -405,29 +518,50 @@ typedef struct {
 ```c
 typedef struct {
     Layer* layers;
-    Layer* output_layer;
+    Layer* output_layer;   // pointer into layers[layers_count - 1]
     int layers_count;
-    int layers_capacity;
+    int layers_capacity;   // grows by doubling; don't touch directly
     int input_size;
+    int batched;           // samples accumulated in current batch
     LossFunction loss_function;
 } Network;
 ```
 
-`layers_capacity` grows by doubling as layers are added; you should not need
-to touch it directly.
+### `ReplayBuffer`
+
+```c
+typedef struct {
+    float* states;          // flat: states[step * state_size + i]
+    int*   actions_idx;
+    float* rewards;
+    int*   should_discount;
+    int*   done;
+    int    state_size;
+    int    size;            // current stored transitions
+    int    capacity;        // allocated slots (doubles on overflow)
+} ReplayBuffer;
+```
+
+### `RLAgent`
+
+```c
+typedef struct {
+    Network*      network;
+    ReplayBuffer* buffers;
+    int           buffers_count;
+} RLAgent;
+```
 
 ---
 
 ## Known Limitations
 
-- `nn_network_test`'s accuracy metric assumes a softmax/one-hot output —
-  don't use it to evaluate regression or multi-label models.
-- Mini-batching averages gradients over the requested `batch` size, but the
-  batch boundaries are simply consecutive slices of `x`/`y` in the order
-  given — there's no shuffling between epochs, so batch composition is
-  fixed across the whole training run.
-- `nn_network_import` / `nn_network_import_file` do **not** validate that
-  the loaded file matches the target network's architecture — mismatches
-  fail silently or read out of bounds rather than raising a clear error.
-- No malloc/fopen failure checks in a few older code paths — treat this as
-  a learning/prototyping library rather than production-hardened code.
+- `nn_network_test` accuracy assumes a softmax/one-hot output — don't use it
+  for regression or multi-label models.
+- Mini-batching slices `x`/`y` in the order given — no shuffling between
+  epochs, so batch composition is fixed across the whole training run.
+- `nn_network_import` / `nn_network_import_file` do **not** validate that the
+  loaded file matches the target architecture — mismatches fail silently or
+  overread the buffer.
+- No malloc/fopen failure checks in some code paths — treat this as a
+  learning/prototyping library, not production-hardened code.
