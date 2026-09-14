@@ -63,8 +63,8 @@ int _arr_max(Layer* l) {
     int idx = 0;
     float max = 0;
     for (int i = 0; i < l->neuron_count; i++){
-        if (l->neurons[i].output > max) {
-            max = l->neurons[i].output;
+        if (l->outputs[i] > max) {
+            max = l->outputs[i];
             idx = i;
         }
     }
@@ -79,7 +79,7 @@ int main () {
     nn_add_layer_dense(model, 16, activation_reLU);
     nn_add_layer_dense(model, 4, activation_softmax);
 
-    nn_network_import_file(model, "./snake_brain42.bin");
+    nn_network_import_file(model, "./snake_brain.bin");
 
     RLAgent* agent = rl_agent_create(model, 1);
 
@@ -252,7 +252,7 @@ int game_loop(GameEnv* env, RLAgent* agent, int should_log) {
 
         get_state(env, state);
         nn_network_forward(agent->network, state);
-        last_action_probability = (int)(agent->network->output_layer->neurons[_arr_max(agent->network->output_layer)].output * 100);
+        last_action_probability = (int)agent->network->output_layer->outputs[ (_arr_max(agent->network->output_layer))] * 100;
         int idx = rl_draw_action(agent->network->output_layer);
         Direction action = DOWN;
         switch (idx)
