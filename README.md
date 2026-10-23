@@ -9,6 +9,28 @@ import/export, and a **REINFORCE policy-gradient** reinforcement learning API.
 #include "MLKit.h"
 ```
 
+## Python
+
+A ctypes wrapper lives in `python/pymlkit` and is built from the same C sources.
+
+```bash
+pip install pymlkit        # or, from a clone: pip install .
+```
+
+```python
+from pymlkit import Network, Activations, Losses
+
+model = Network(2)
+model.add_dense(16, Activations.ReLU)
+model.add_dense(1, Activations.Sigmoid)
+model.set_loss(Losses.HalfMSE)
+model.fit(train_x, train_y, lr=0.1, epochs=100, batch=16)
+print(model.forward([0.1, 0.2]))
+```
+
+Full example: `python/examples/circle_classifier.py`. To build only the C
+library: `cmake -S . -B build && cmake --build build`.
+
 ---
 
 ## Table of Contents

@@ -5,8 +5,8 @@
 #include "../../MLKit.h"
 #include <conio.h>
 
-#define LR 0.005f 
-#define GAMMA 0.95f 
+#define LR 0.04f 
+#define GAMMA 0.98f 
 #define WIDTH 10  
 #define HEIGHT 10
 
@@ -29,7 +29,8 @@ typedef enum {
     UP = 1,
     DOWN = -1,
     LEFT = 2,
-    RIGHT = -2
+    RIGHT = -2,
+    DNONE = 0
 } Direction;
 
 typedef enum {
@@ -90,7 +91,7 @@ int main () {
 
 
     GameEnv* env = create_env();
-    int print_every = 5000;
+    int print_every = 1000;
     int apples = 0;
     int batch = 1;
     float best_avg_score = 0;
@@ -260,12 +261,12 @@ int game_loop(GameEnv* env, RLAgent* agent, int should_log) {
             }*/
 
         float state[STATE_SIZE];
-        float reward = -0.1f;
+        float reward = -0.05f;
         int should_discount = 1;
 
         get_state(env, state);
         nn_network_forward(agent->network, state);
-        int idx = rl_draw_action(agent->network->output_layer);
+        int idx = rl_draw_action(agent->network, state);
         Direction action = DOWN;
         switch (idx)
         {
@@ -310,9 +311,9 @@ int game_loop(GameEnv* env, RLAgent* agent, int should_log) {
             env->alive=0;
         }
         if (collision_type == C_BODY) {
-            reward = -30;
+            reward = -15;
         }else if (collision_type == C_EDGE) {
-            reward = -30;
+            reward = -15;
             should_discount = 0;
         }else if (collision_type == C_APPLE) {
             reward = 15;
@@ -320,7 +321,7 @@ int game_loop(GameEnv* env, RLAgent* agent, int should_log) {
         }else{
             if (step > MAX_STEP + env->snake_length * 10) {
                 env->alive = 0;
-                reward = -25;
+                reward = -10;
             }
         }
         rl_remember(&agent->buffers[0], state, reward/10, idx, should_discount, 0);
@@ -335,7 +336,6 @@ int game_loop(GameEnv* env, RLAgent* agent, int should_log) {
 
 void reset_env(GameEnv* env) {
     env->alive = 1;
-    spawn_food(env);
     env->head = (Point){WIDTH/2, HEIGHT/2};
     Point head = env->head;
     env->direction = RIGHT;
@@ -344,6 +344,8 @@ void reset_env(GameEnv* env) {
     env->snake[1] = (Point){head.x-1, head.y};
     env->snake[2] = (Point){head.x-2, head.y};
     env->snake_length = 3;
+    spawn_food(env);
+
 }
 
 GameEnv* create_env() {
@@ -351,14 +353,15 @@ GameEnv* create_env() {
     env->alive = 1;
     env->avg_score = 0;
     env->helper_enabled = 1;
-    spawn_food(env);
     env->head = (Point){WIDTH/2, HEIGHT/2};
     Point head = env->head;
-    env->direction = C_NONE;
+    env->direction = RIGHT;
     env->snake[0] = head;
     env->snake[1] = (Point){head.x-1, head.y};
     env->snake[2] = (Point){head.x-2, head.y};
     env->snake_length = 3;
+    spawn_food(env);
+
     return env;
 }
 

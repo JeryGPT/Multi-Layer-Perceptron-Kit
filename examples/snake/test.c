@@ -253,7 +253,7 @@ int game_loop(GameEnv* env, RLAgent* agent, int should_log) {
         get_state(env, state);
         nn_network_forward(agent->network, state);
         last_action_probability = (int)agent->network->output_layer->outputs[ (_arr_max(agent->network->output_layer))] * 100;
-        int idx = rl_draw_action(agent->network->output_layer);
+        int idx = rl_draw_action(agent->network, state);
         Direction action = DOWN;
         switch (idx)
         {
