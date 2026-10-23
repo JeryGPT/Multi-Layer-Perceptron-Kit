@@ -363,7 +363,6 @@ void _policy_step(Network *net, float *state, int action_idx, float G) {
   if (net->output_layer->activation == activation_softmax) {
     Layer *output_l = net->output_layer;
     for (int n = 0; n < output_l->neuron_count; n++) {
-      output_l->errors[n] = _get_derivative(output_l, n);
       float target = n == action_idx;
       output_l->deltas[n] = (output_l->outputs[n] - target) *
                             G; // Policy gradient loss (-ln(output) * G) deriv
@@ -398,6 +397,7 @@ int nn_network_import_file(Network *net, char *filepath) {
   FILE *fptr = fopen(filepath, "rb");
   if (!fptr) {
     printf("Failed to open the import file.");
+    
     return -1;
   }
 
@@ -434,7 +434,9 @@ int nn_network_import_file(Network *net, char *filepath) {
   return 0;
 }
 
-int rl_draw_action(Layer *output_l) {
+int rl_draw_action(Network* net, float* state) {
+  nn_network_forward(net, state);
+  Layer *output_l = net->output_layer;
   float r = (float)rand() / (float)RAND_MAX;
   float sum = 0.0f;
 
@@ -451,6 +453,7 @@ void rl_replaybuff_clear(ReplayBuffer *buff) {
   memset(buff->rewards, 0, buff->capacity * sizeof(float));
   memset(buff->actions_idx, 0, buff->capacity * sizeof(int));
   memset(buff->should_discount, 0, buff->capacity * sizeof(int));
+  memset(buff->done, 0, buff->capacity * sizeof(int));
 
   buff->size = 0;
 }
@@ -793,10 +796,20 @@ void nn_network_destroy(Network *net) {
     if (net->layers[l].type == LAYER_INPUT)
       continue;
 
-    free(net->layers[l].weights_gradient);
-    free(net->layers[l].bias_gradient);
-    free(net->layers[l].z_values);
-    free(net->layers[l].weights);
+        
+    Layer* layer = &net->layers[l];
+
+    free(layer->weights_gradient);
+    free(layer->bias_gradient);
+
+    free(layer->weights);
+    free(layer->biases);
+
+    free(layer->z_values);
+    free(layer->outputs);
+    free(layer->deltas);
+    free(layer->errors);
+
   }
 
   free(net->layers);

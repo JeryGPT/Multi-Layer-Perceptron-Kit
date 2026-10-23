@@ -109,7 +109,7 @@ RLAgent*    rl_agent_create(Network* model, int agent_count);
 
 void        rl_remember(ReplayBuffer* buff, float* state, float reward, int action_idx, int should_discount, int done);
 void        rl_replaybuff_clear(ReplayBuffer* buff);
-int         rl_draw_action(Layer* output_l);
+int         rl_draw_action(Network* net, float* state);
 void        rl_agent_destroy(RLAgent* agent);
 
 

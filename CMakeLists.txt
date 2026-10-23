@@ -1,0 +1,27 @@
+cmake_minimum_required(VERSION 3.15)
+project(MLKit LANGUAGES C)
+
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)
+
+add_library(MLKit SHARED MLKit.c)
+target_include_directories(MLKit PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+if(MSVC)
+  target_compile_options(MLKit PRIVATE /O2 /fp:fast)
+else()
+  target_compile_options(MLKit PRIVATE -Ofast)
+endif()
+if(WIN32)
+  set_target_properties(MLKit PROPERTIES PREFIX "")
+else()
+  target_link_libraries(MLKit PRIVATE m)
+endif()
+
+
+if(SKBUILD)
+  install(TARGETS MLKit LIBRARY DESTINATION pymlkit RUNTIME DESTINATION pymlkit)
+else()
+  include(GNUInstallDirs)
+  install(TARGETS MLKit)
+  install(FILES MLKit.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+endif()

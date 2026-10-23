@@ -1,0 +1,33 @@
+[build-system]
+requires = ["scikit-build-core>=0.10"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "pymlkit"
+version = "0.1.0"
+description = "Small neural network library with a C core and a Python wrapper"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+authors = [{ name = "Jery", email = "mroczkojeremi@gmail.com" }]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: C",
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+[project.urls]
+Repository = "https://github.com/JeryGPT/Multi-Layer-Perceptron-Kit"
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[tool.scikit-build]
+wheel.packages = ["python/pymlkit"]
+wheel.py-api = "py3"
+# keep datasets, model snapshots and binaries out of the source distribution
+sdist.exclude = ["examples", "model_snapshots", "*.bin", "*.log"]
+
+[tool.pytest.ini_options]
+testpaths = ["python/tests"]
