@@ -9,3 +9,6 @@ dist/
 .venv/
 *.so
 *.dylib
+
+*.log
+*.bin
