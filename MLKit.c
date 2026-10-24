@@ -56,6 +56,7 @@ float _get_derivative(Layer *output_layer, int neuron_idx) {
   default:
     return 1.0;
   }
+  return 1.0f;
 }
 
 float _loss_value(LossFunction loss_f, float output,
@@ -73,6 +74,7 @@ float _loss_value(LossFunction loss_f, float output,
     break;
   }
   }
+  return 0.0f;
 }
 
 float _loss_deriv_value(LossFunction loss_f, float output,
@@ -90,6 +92,7 @@ float _loss_deriv_value(LossFunction loss_f, float output,
     return -y / output + (1 - y) / (1 - output);
   }
   }
+  return 0.0f;
 }
 
 static void _softmax_output_delta(Layer *output_l, LossFunction loss_f) {
