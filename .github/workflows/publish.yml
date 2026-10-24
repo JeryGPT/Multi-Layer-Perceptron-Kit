@@ -77,6 +77,8 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+      # PyPI rejects Pyodide (wasm32) wheels, keep them out of the upload
+      - run: rm -f dist/*pyodide*
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
           skip-existing: true
