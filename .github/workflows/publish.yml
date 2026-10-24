@@ -39,12 +39,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: pypa/cibuildwheel@v3.2.1
+      - uses: pypa/cibuildwheel@v4.3.4
         env:
           CIBW_PLATFORM: pyodide
-          CIBW_ENABLE: pyodide-prerelease
-          # PyPI only accepts pyodide_2025_0+ (Python 3.13); skip the 3.12 wheel
-          CIBW_BUILD: "cp313-*"
+          # Pyodide 314 (Python 3.14) -> pyemscripten_2026_0_wasm32, accepted by PyPI (PEP 783)
+          CIBW_BUILD: "cp314-pyodide_wasm32"
           CIBW_ENVIRONMENT: "SKBUILD_BUILD_VERBOSE=true"
           CIBW_TEST_REQUIRES: pytest
           CIBW_TEST_COMMAND: "pytest {project}/python/tests"
@@ -77,8 +76,6 @@ jobs:
         with:
           path: dist
           merge-multiple: true
-      # PyPI rejects Pyodide (wasm32) wheels, keep them out of the upload
-      - run: rm -f dist/*pyodide*
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
           skip-existing: true
