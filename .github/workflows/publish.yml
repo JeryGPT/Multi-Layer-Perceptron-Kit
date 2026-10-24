@@ -43,6 +43,8 @@ jobs:
         env:
           CIBW_PLATFORM: pyodide
           CIBW_ENABLE: pyodide-prerelease
+          # PyPI only accepts pyodide_2025_0+ (Python 3.13); skip the 3.12 wheel
+          CIBW_BUILD: "cp313-*"
           CIBW_ENVIRONMENT: "SKBUILD_BUILD_VERBOSE=true"
           CIBW_TEST_REQUIRES: pytest
           CIBW_TEST_COMMAND: "pytest {project}/python/tests"
@@ -76,3 +78,5 @@ jobs:
           path: dist
           merge-multiple: true
       - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true
