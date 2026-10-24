@@ -47,9 +47,10 @@ float _get_derivative(Layer *output_layer, int neuron_idx) {
     return z_val < 0 ? 0.0 : 1.0;
     break;
 
-  case activation_sigmoid:
+  case activation_sigmoid: {
     float s = _sigmoid(z_val);
     return s * (1.0 - s);
+  }
   case activation_softmax:
     break;
   default:
@@ -60,9 +61,10 @@ float _get_derivative(Layer *output_layer, int neuron_idx) {
 float _loss_value(LossFunction loss_f, float output,
                   float y) { // per/neuron calculation
   switch (loss_f) {
-  case HalfMSE:
+  case HalfMSE: {
     float error = output - y;
     return 0.5 * error * error;
+  }
   case CrossEntropy: {
     float epsilon = 1e-7f;
     if (output < epsilon)
@@ -612,7 +614,7 @@ void _layer_activate(Layer *layer) {
     }
     break;
 
-  case activation_softmax:
+  case activation_softmax: {
     float max = layer->z_values[0];
 
     for (int n = 0; n < layer->neuron_count; n++) {
@@ -631,6 +633,7 @@ void _layer_activate(Layer *layer) {
       layer->outputs[n] /= sum_exp;
     }
     break;
+  }
   case activation_linear:
     for (int n = 0; n < layer->neuron_count; n++) {
       layer->outputs[n] = layer->z_values[n];
