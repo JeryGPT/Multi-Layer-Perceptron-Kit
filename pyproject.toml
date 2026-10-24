@@ -4,7 +4,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "pymlkit"
-version = "0.1.0"
+version = "0.1.1"
 description = "Small neural network library with a C core and a Python wrapper"
 readme = "README.md"
 license = { text = "MIT" }

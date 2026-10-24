@@ -31,6 +31,27 @@ jobs:
           name: wheels-${{ matrix.os }}
           path: wheelhouse/*.whl
 
+  # WebAssembly wheel so `micropip.install("pymlkit")` works in Pyodide.
+  # MLKit.c is compiled with Emscripten and loaded through ctypes.
+  build_pyodide:
+    name: Wheel (Pyodide)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pypa/cibuildwheel@v3.2.1
+        env:
+          CIBW_PLATFORM: pyodide
+          CIBW_ENABLE: pyodide-prerelease
+          CIBW_ENVIRONMENT: "SKBUILD_BUILD_VERBOSE=true"
+          CIBW_TEST_REQUIRES: pytest
+          CIBW_TEST_COMMAND: "pytest {project}/python/tests"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-pyodide
+          path: wheelhouse/*.whl
+
   build_sdist:
     name: Source distribution
     runs-on: ubuntu-latest
@@ -44,7 +65,7 @@ jobs:
 
   publish:
     name: Upload to PyPI
-    needs: [build_wheels, build_sdist]
+    needs: [build_wheels, build_pyodide, build_sdist]
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
