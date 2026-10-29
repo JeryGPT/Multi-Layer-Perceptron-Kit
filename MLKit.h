@@ -101,15 +101,18 @@ void        nn_apply_gradients(Network* net, float lr);
 
 // Reinforcement Learning 
 
-void        rl_policy_fit(RLAgent* agent, int* buffer_ids, int buffers_count, float lr, float gamma);
+void        rl_agent_train_buffers(RLAgent* agent, int* buffer_ids, int buffers_count, float lr, float gamma);
+
+void        rl_agent_train(RLAgent* agent, float lr, float gamma);
+void        rl_agent_train_buffer(RLAgent* agent, int buffer_id, float lr, float gamma);
 
 void        _agent_add_replaybuffers(RLAgent* agent, int agent_count);
-RLAgent*    rl_agent_create(Network* model, int agent_count);
+RLAgent*    rl_agent_create(Network* model, int buffers_count);
 
 
-void        rl_remember(ReplayBuffer* buff, float* state, float reward, int action_idx, int should_discount, int done);
-void        rl_replaybuff_clear(ReplayBuffer* buff);
-int         rl_draw_action(Network* net, float* state);
+void        rl_remember(RLAgent* agent, int buffer_id, float* state, float reward, int action_idx, int should_discount, int done);
+void        rl_replaybuff_clear(RLAgent* agent, int buffer_id);
+int         rl_draw_action(RLAgent* agent, float* state);
 void        rl_agent_destroy(RLAgent* agent);
 
 
@@ -118,7 +121,7 @@ void        rl_agent_destroy(RLAgent* agent);
 
 void        nn_network_export(Network* net, char* filepath);
 void        nn_network_import(Network* net, float* buffer, int size);
-int        nn_network_import_file(Network* net, char* filepath);
+int         nn_network_import_file(Network* net, char* filepath);
 
 // Helpers 
 
