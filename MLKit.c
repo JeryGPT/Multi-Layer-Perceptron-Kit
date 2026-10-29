@@ -378,7 +378,26 @@ void _policy_step(Network *net, float *state, int action_idx, float G) {
   _calculate_hidden_deltas(net);
 }
 
-void rl_policy_fit(RLAgent *agent, int *buffer_ids, int buffers_count, float lr,
+
+void rl_agent_train(RLAgent *agent, float lr,
+                   float gamma) {
+
+  Network *net = agent->network;
+  int input_size = net->input_size;
+  int output_size = net->output_layer->neuron_count;
+  for (int i = 0; i < agent->buffers_count; i++) {
+    ReplayBuffer *buffer = &agent->buffers[i];
+    int samples = buffer->size;
+    _discount_rewards(buffer, gamma);
+    for (int step = 0; step < samples; step++) {
+      _policy_step(net, &buffer->states[step * input_size],
+                   buffer->actions_idx[step], buffer->rewards[step]);
+    }
+    rl_replaybuff_clear(agent, i);
+  }
+  nn_apply_gradients(net, lr);
+}
+void rl_agent_train_buffers(RLAgent *agent, int *buffer_ids, int buffers_count, float lr,
                    float gamma) {
 
   Network *net = agent->network;
@@ -392,11 +411,28 @@ void rl_policy_fit(RLAgent *agent, int *buffer_ids, int buffers_count, float lr,
       _policy_step(net, &buffer->states[step * input_size],
                    buffer->actions_idx[step], buffer->rewards[step]);
     }
-    rl_replaybuff_clear(buffer);
+    rl_replaybuff_clear(agent, buffer_ids[i]);
   }
   nn_apply_gradients(net, lr);
 }
 
+void rl_agent_train_buffer(RLAgent *agent, int buffer_id, float lr,
+                   float gamma) {
+
+  Network *net = agent->network;
+  int input_size = net->input_size;
+  int output_size = net->output_layer->neuron_count;
+  ReplayBuffer *buffer = &agent->buffers[buffer_id];
+  int samples = buffer->size;
+  _discount_rewards(buffer, gamma);
+  for (int step = 0; step < samples; step++) {
+    _policy_step(net, &buffer->states[step * input_size],
+                   buffer->actions_idx[step], buffer->rewards[step]);
+  }
+  rl_replaybuff_clear(agent, buffer_id);
+  
+  nn_apply_gradients(net, lr);
+}
 int nn_network_import_file(Network *net, char *filepath) {
 
   FILE *fptr = fopen(filepath, "rb");
@@ -439,7 +475,9 @@ int nn_network_import_file(Network *net, char *filepath) {
   return 0;
 }
 
-int rl_draw_action(Network* net, float* state) {
+int rl_draw_action(RLAgent *agent, float *state) {
+  Network *net = agent->network;
+
   nn_network_forward(net, state);
   Layer *output_l = net->output_layer;
   float r = (float)rand() / (float)RAND_MAX;
@@ -453,7 +491,8 @@ int rl_draw_action(Network* net, float* state) {
   }
   return output_l->neuron_count - 1; // Fallback
 }
-void rl_replaybuff_clear(ReplayBuffer *buff) {
+void rl_replaybuff_clear(RLAgent *agent, int buffer_id) {
+  ReplayBuffer *buff = &agent->buffers[buffer_id];
   memset(buff->states, 0, buff->capacity * buff->state_size * sizeof(float));
   memset(buff->rewards, 0, buff->capacity * sizeof(float));
   memset(buff->actions_idx, 0, buff->capacity * sizeof(int));
@@ -463,13 +502,19 @@ void rl_replaybuff_clear(ReplayBuffer *buff) {
   buff->size = 0;
 }
 
-RLAgent *rl_agent_create(Network *model, int agent_count) {
+void rl_replaybuff_clear_all(RLAgent *agent) {
+  for (int i = 0; i < agent->buffers_count; i++) {
+    rl_replaybuff_clear(agent, i);
+  }
+}
+
+RLAgent *rl_agent_create(Network *model, int buffers_count) {
   RLAgent *agent = malloc(sizeof(RLAgent));
   agent->network = model;
   agent->buffers = NULL;
   agent->buffers_count = 0;
-  _agent_add_replaybuffers(agent, agent_count);
-  agent->buffers_count = agent_count;
+  _agent_add_replaybuffers(agent, buffers_count);
+  agent->buffers_count = buffers_count;
 
   return agent;
 }
@@ -486,9 +531,10 @@ void _agent_add_replaybuffers(RLAgent *agent, int agent_count) {
   }
 }
 
-void rl_remember(ReplayBuffer *buff, float *state, float reward, int action_idx,
+void rl_remember(RLAgent *agent, int buffer_id, float *state, float reward, int action_idx,
                  int should_discount, int done) {
 
+  ReplayBuffer *buff = &agent->buffers[buffer_id];
   if (buff->size == buff->capacity) {
 
     buff->capacity *= 2;

@@ -118,7 +118,7 @@ int main () {
             best_score = 0;
         }
         batch = best_avg_score >= 15 ? 4 : batch;
-        if  (epoch % batch == 0) rl_policy_fit(agent, (int[1]){0}, 1, LR, GAMMA); // batching 
+        if  (epoch % batch == 0) rl_agent_train_buffer(agent, 0, LR, GAMMA); // batching 
         reset_env(env);
 
 
@@ -266,7 +266,7 @@ int game_loop(GameEnv* env, RLAgent* agent, int should_log) {
 
         get_state(env, state);
         nn_network_forward(agent->network, state);
-        int idx = rl_draw_action(agent->network, state);
+        int idx = rl_draw_action(agent, state);
         Direction action = DOWN;
         switch (idx)
         {
@@ -324,7 +324,7 @@ int game_loop(GameEnv* env, RLAgent* agent, int should_log) {
                 reward = -10;
             }
         }
-        rl_remember(&agent->buffers[0], state, reward/10, idx, should_discount, 0);
+        rl_remember(agent, 0, state, reward/10, idx, should_discount, 0);
 
 
 
